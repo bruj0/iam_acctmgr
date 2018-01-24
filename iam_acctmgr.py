@@ -350,10 +350,8 @@ def service():
             changed = False
       
         # pylint: enable=broad-except
-        #time.sleep(IAM_POLLING_INTERVAL)
         LOG.info("Sleeping for 2")
-        time.sleep(1)
-        #time.sleep(IAM_POLLING_INTERVAL)
+        time.sleep(IAM_POLLING_INTERVAL)
 
 
 def configure_system(argv=None):
