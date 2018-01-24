@@ -95,7 +95,7 @@ def fetch_keys(group_name):
     session = botocore.session.get_session()
     iam = session.create_client('iam')
     try:
-        members = iam.get_group(GroupName='admin')
+        members = iam.get_group(GroupName=group_name)
     except:
         LOG.error('Error trying to retrieve IAM group %s', group_name)
         raise
