@@ -1,0 +1,105 @@
+#!/bin/bash
+#
+# iam_acctmgr        This starts and stops iam_acctmgr
+#
+# chkconfig: - 13 99
+# description: This starts the iam_acctmgr Daemon
+#
+# processname: /usr/bin/iam_acctmgr
+# config: /etc/sysconfig/iam_acctmgr
+# pidfile: /var/run/iam_acctmgr.pid
+#
+# Return values according to LSB for all commands but status:
+# 0 - success
+# 1 - generic or unspecified error
+# 2 - invalid or excess argument(s)
+# 3 - unimplemented feature (e.g. "reload")
+# 4 - insufficient privilege
+# 5 - program is not installed
+# 6 - program is not configured
+# 7 - program is not running
+#
+
+
+PATH=/sbin:/bin:/usr/bin:/usr/sbin
+prog="iam_acctmgr"
+EXTRAOPTIONS="ssh_sudo ssh_ro"
+# Source function library.
+. /etc/init.d/functions
+
+# Allow anyone to run status
+if [ "$1" = "status" ] ; then
+	status $prog
+	RETVAL=$?
+	exit $RETVAL
+fi
+# Check that we are root ... so non-root users stop here
+test $EUID = 0  ||  exit 4
+
+# Check config
+test -f /etc/sysconfig/iam_acctmgr && . /etc/sysconfig/iam_acctmgr
+
+RETVAL=0
+
+start(){
+	test -x /usr/bin/iam_acctmgr  || exit 5
+
+	echo -n $"Starting $prog: "
+
+	unset HOME MAIL USER USERNAME
+	daemon --check $prog nohup $prog "$EXTRAOPTIONS" >/dev/null 2>&1 &
+	RETVAL=$?
+	echo
+	if test $RETVAL = 0 ; then
+		touch /var/lock/subsys/iam_acctmgr
+	fi
+	return $RETVAL
+}
+
+stop(){
+	echo -n $"Stopping $prog: "
+	killproc $prog
+	RETVAL=$?
+	echo
+	rm -f /var/lock/subsys/iam_acctmgr
+	return $RETVAL
+}
+
+reload(){
+	stop
+	start
+}
+restart(){
+	stop
+	start
+}
+
+condrestart(){
+	[ -e /var/lock/subsys/iam_acctmgr ] && restart
+	return 0
+}
+
+
+# See how we were called.
+case "$1" in
+    start)
+	start
+	;;
+    stop)
+	stop
+	;;
+    restart)
+	restart
+	;;
+    reload|force-reload)
+	reload
+	;;
+    condrestart|try-restart)
+	condrestart
+	;;
+    *)
+	echo $"Usage: $0 {start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
+	RETVAL=3
+esac
+
+exit $RETVAL

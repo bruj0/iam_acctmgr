@@ -35,4 +35,5 @@ setup(
         'Programming Language :: Python :: 3.4',
         'Topic :: System',
     ],
+    data_files=[('/etc/init.d', ['iam_acctmgr'])]
 )
