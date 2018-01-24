@@ -21,13 +21,15 @@ import os
 import pwd
 import re
 import spwd
+import grp
 import subprocess
 import sys
 import tempfile
 import time
 import traceback
-
+import hashlib
 import botocore.session
+USING_PYTHON2 = True if sys.version_info < (3, 0) else False
 
 
 # Requires botocore>=1.0 but Jessie is on an ancient version
@@ -37,8 +39,8 @@ import botocore.session
 LOG = logging.getLogger('iam_acctmgr')
 EPOCH = datetime.datetime.utcfromtimestamp(0)
 IAM_POLLING_INTERVAL = int(os.getenv('IAM_ACCTMGR_POLL_INTERVAL', 60))
-MIN_USER_UID = int(os.getenv('IAM_ACCTMGR_MIN_USER_UID', 10000))
-MAX_USER_UID = int(os.getenv('IAM_ACCTMGR_MAX_USER_UID', 19999))
+MIN_USER_UID = int(os.getenv('IAM_ACCTMGR_MIN_USER_UID', 1000))
+MAX_USER_UID = int(os.getenv('IAM_ACCTMGR_MAX_USER_UID', 63999))
 IAM_PUB_KEY_FILE = '/etc/iam-pub-ssh-keys'
 IAM_GROUP = os.getenv('IAM_ACCTMGR_GROUP')
 
@@ -57,8 +59,11 @@ assert MAX_USER_UID > MIN_USER_UID
 
 def is_iam_user(user):
     'Is the UID of a ``pwd.struct_passwd`` within the range of IAM users?'
-    return user.pw_uid >= MIN_USER_UID and user.pw_uid <= MAX_USER_UID
+    return user.pw_uid >= MIN_USER_UID
 
+def is_iam_group(group):
+    'Is the UID of a ``grp.struct_group`` within the range of IAM users?'
+    return group.gr_gid >= MIN_USER_UID
 
 def authorized_keys_command(username=None,
                             pub_keys_file=IAM_PUB_KEY_FILE,
@@ -101,9 +106,11 @@ def fetch_keys(group_name):
         raise
 
     result = {}
+    ids = {}
     for user in members['Users']:
         username = user['UserName']
         result[username] = []
+        ids[username] = user['UserId']
         for key in iam.list_ssh_public_keys(UserName=username)['SSHPublicKeys']:
             if 'Active' != key['Status']:
                 continue
@@ -116,7 +123,7 @@ def fetch_keys(group_name):
         # Ensure stable ordering
         result[username].sort()
 
-    return result
+    return result, ids
 
 
 def filter_keys(user_pks, system_names):
@@ -156,8 +163,26 @@ def shadow_to_line(struct):
     return ':'.join('' if isinstance(x, int) and x < 0 else str(x)
                     for x in struct).encode('utf-8')
 
+def from_bytes(data, big_endian=False):
+    """Used on Python 2 to handle int.from_bytes"""
+    if isinstance(data, str):
+        data = bytearray(data)
+    if big_endian:
+        data = reversed(data)
+    num = 0
+    for offset, byte in enumerate(data):
+        num += byte << (offset * 8)
+    return num
 
-def process(user_pks, pwall, spwall):
+def aws_to_unix_id(aws_key_id):
+    """Converts a AWS Key ID into a UID"""
+    uid_bytes = hashlib.sha256(aws_key_id.encode()).digest()[-2:]
+    if USING_PYTHON2:
+        return 2000 + int(from_bytes(uid_bytes) // 2)
+    else:
+        return 2000 + (int.from_bytes(uid_bytes, byteorder=sys.byteorder) // 2)
+
+def process(user_pks, pwall, spwall,grpall,set_sudo,user_ids):
     '''Generate the passwd, shadow, and sudo fragments for IAM users.
 
     :param user_pks: Mapping of username (``str``) to public keys (``list`` of
@@ -174,32 +199,33 @@ def process(user_pks, pwall, spwall):
     susername_index = dict(
         (user[0], user) for user in spwall
         if user[0] in username_index)
-    uid_index = dict((int(user.pw_uid), user) for user in pwall)
+    group_index = dict(
+        (group[0],group) for group in grpall if is_iam_group(group))
     next_uid = MIN_USER_UID
 
-    passwd, shadow, sudo = [], [], []
+    passwd, shadow, sudo , group = [], [], [], []
 
     # Users that have been removed from IAM will keep their UIDs around in the
     # event that user IDs have.  In practice, I don't anticipate this behavior
     # to be problematic since there is an abundance of UIDs available in the
     # default configuration UID range for all but the largest admin user pools.
-    for old_username in set(username_index.keys()) - set(user_pks.keys()):
-        passwd.append(username_index[old_username])
-        shadow.append(susername_index[old_username])
+    #for old_username in set(username_index.keys()) - set(user_pks.keys()):
+    #    passwd.append(username_index[old_username])
+    #    shadow.append(susername_index[old_username])
+    LOG.info("Not appending old users")
 
     for username in user_pks.keys():
-        # Find the next gap in user IDs
-        while next_uid in uid_index:
-            next_uid += 1
-        if next_uid > MAX_USER_UID:
-            LOG.error("User limit reached!  Skipping user %s", username)
-            break
+        
+        next_uid = aws_to_unix_id(user_ids[username])
+        LOG.info("Calculated UID for %s is %s",next_uid,username)
 
-        sudo.append('{} ALL=(ALL) NOPASSWD:ALL'.format(username))
+        if set_sudo is True:
+            sudo.append('{} ALL=(ALL) NOPASSWD:ALL'.format(username))
 
         if username in username_index:
             passwd.append(username_index[username])
             shadow.append(susername_index[username])
+            group.append(group_index[username])
         else:
             passwd.append(pwd.struct_passwd((
                 username,
@@ -222,17 +248,25 @@ def process(user_pks, pwall, spwall):
                 -1,
                 -1,
             )))
-            next_uid += 1
 
-    sudo.sort()
-    sudo.insert(0, '# Created by {} on {}'.format(
-        __file__,
-        datetime.datetime.utcnow().ctime()))
+            group.append(grp.struct_group((
+                username,
+                '',
+                next_uid,
+                ''
+            )))
+
+    if set_sudo is True:
+        sudo.sort()
+        sudo.insert(0, '# Created by {} on {}'.format(
+            __file__,
+            datetime.datetime.utcnow().ctime()))
 
     return (
         sorted(passwd_to_line(x) for x in passwd),
         sorted(shadow_to_line(x) for x in shadow),
-        [x.encode('utf-8') for x in sudo]
+        [x.encode('utf-8') for x in sudo],
+        sorted(shadow_to_line(x) for x in group),
     )
 
 
@@ -256,37 +290,70 @@ def service():
     iam_group = IAM_GROUP
     if len(sys.argv) > 1:
         iam_group = sys.argv[1]
-    assert iam_group is not None, 'IAM_ACCTMGR_GROUP env variable is not set'
+    assert iam_group is not None, 'sudo group not set'
+
+    if len(sys.argv) >= 2:
+        iam_group_ro = sys.argv[2]
+    assert iam_group_ro is not None, 'RO group not set'
+
 
     prior = None
+    prior_ro = None
+    changed = False
     while True:
+        pwall, spwall, grpall = pwd.getpwall(), spwd.getspall(), grp.getgrall()
+        system_names = set(
+            user.pw_name for user in pwall if not is_iam_user(user))
+
         try:
-            pwall, spwall = pwd.getpwall(), spwd.getspall()
-            system_names = set(
-                user.pw_name for user in pwall if not is_iam_user(user))
-            user_pks = filter_keys(fetch_keys(iam_group), system_names)
-            if prior == user_pks:
-                # No change - short circuit
-                time.sleep(IAM_POLLING_INTERVAL)
-                continue
-            else:
+            user_pks, user_ids = fetch_keys(iam_group)
+            user_pks = filter_keys(user_pks, system_names)
+            if prior != user_pks:
+                LOG.info('SUDO GROUP Processing user accounts: %s', user_pks)
+                extra_passwd, extra_shadow, extra_sudo, extra_group = process(
+                    user_pks, pwall, spwall,grpall,True,user_ids)
                 prior = user_pks
-            LOG.info('Processing user accounts: %s', user_pks)
-
-            extra_passwd, extra_shadow, extra_sudo = process(
-                user_pks, pwall, spwall)
-
-            write(extra_passwd, EXTRAUSERS_PASSWD)
-            write(extra_shadow, EXTRAUSERS_SHADOW, '0600')
-            write(extra_sudo, SUDOERS_CONFIG, '0400')
-
-            with open(IAM_PUB_KEY_FILE, 'w') as keyfd:
-                json.dump(user_pks, keyfd)
+                changed = True
         # pylint: disable=broad-except
         except Exception:
             LOG.error(traceback.format_exc())
+# sync second RO group            
+        try:
+            user_pks_ro, user_ids = fetch_keys(iam_group_ro)
+            user_pks_ro = filter_keys(user_pks_ro, system_names)
+            if prior_ro != user_pks_ro:
+                LOG.info('RO GROUP Processing user accounts: %s', user_pks_ro)
+                extra_passwd_ro, extra_shadow_ro, _ , extra_group_ro = process(
+                    user_pks_ro, pwall, spwall,grpall,False,user_ids)
+                LOG.info('SUDO GROUP : %s', extra_passwd)
+                LOG.info('RO GROUP : %s', extra_passwd_ro)
+                prior_ro = user_pks_ro
+                changed = True
+
+        # pylint: disable=broad-except
+        except Exception:
+            LOG.error(traceback.format_exc())
+
+        if changed is True:
+            with open(IAM_PUB_KEY_FILE, 'w') as keyfd:
+                json.dump(dict(user_pks.items() + user_pks_ro.items()), keyfd)
+            full_passwd=extra_passwd + extra_passwd_ro
+            full_shadow=extra_shadow + extra_shadow_ro
+            full_group=extra_group + extra_group_ro
+            LOG.info('passwd : %s', full_passwd)
+            LOG.info('shadow : %s', full_shadow)
+            LOG.info('group : %s', full_group)
+            write(full_passwd, EXTRAUSERS_PASSWD)
+            write(full_shadow, EXTRAUSERS_SHADOW, '0600')
+            write(extra_sudo, SUDOERS_CONFIG, '0400')
+            write(full_group,'/var/lib/extrausers/group','0600')
+            changed = False
+      
         # pylint: enable=broad-except
-        time.sleep(IAM_POLLING_INTERVAL)
+        #time.sleep(IAM_POLLING_INTERVAL)
+        LOG.info("Sleeping for 2")
+        time.sleep(1)
+        #time.sleep(IAM_POLLING_INTERVAL)
 
 
 def configure_system(argv=None):
