@@ -444,7 +444,8 @@ def make_config_nsswitch(nsswitch_config_path):
         for line in nss_fd.readlines():
             parts = line.split('#', 1)
             if (parts[0].strip().startswith('passwd:')
-                    or parts[0].strip().startswith('shadow:')):
+                    or parts[0].strip().startswith('shadow:')
+                    or parts[0].strip().startswith('group:')):
                 subparts = parts[0].split()
                 if extrausers not in subparts:
                     result.append('{} {}'.format(
