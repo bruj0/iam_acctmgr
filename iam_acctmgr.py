@@ -249,12 +249,12 @@ def process(user_pks, pwall, spwall,grpall,set_sudo,user_ids):
                 -1,
             )))
 
-            group.append(grp.struct_group((
+            group.append([
                 username,
-                '',
+                'x',
                 next_uid,
                 ''
-            )))
+            ])
 
     if set_sudo is True:
         sudo.sort()
@@ -346,7 +346,7 @@ def service():
             write(full_passwd, EXTRAUSERS_PASSWD)
             write(full_shadow, EXTRAUSERS_SHADOW, '0600')
             write(extra_sudo, SUDOERS_CONFIG, '0400')
-            write(full_group,'/var/lib/extrausers/group','0600')
+            write(full_group,'/var/lib/extrausers/group')
             changed = False
       
         # pylint: enable=broad-except
