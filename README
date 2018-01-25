@@ -55,7 +55,11 @@ Manual Installation
 RPM Based Install
 -----------------
 
-I have created 2 rpms for Amazon Linux version amzn-ami-hvm-2017.09.1.20180115-x86_64-gp2 (ami-97785bed).
+I have created 2 rpms for Amazon Linux version amzn-ami-hvm-2017.09.1.20180115-x86_64-gp2 (ami-97785bed) :
+
+https://github.com/bruj0/iam_acctmgr/releases/download/0.2/iam_acctmgr-0.1-1.noarch.rpm
+https://github.com/bruj0/iam_acctmgr/releases/download/0.2/libnss-extrausers-0.6-0.x86_64.rpm
+
 
 $ rpm -i iam_acctmgr-0.1-1.noarch.rpm 
 $ rpm -i libnss-extrausers-0.6-0.x86_64.rpm
