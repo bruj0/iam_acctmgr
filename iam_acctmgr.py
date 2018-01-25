@@ -249,12 +249,12 @@ def process(user_pks, pwall, spwall,grpall,set_sudo,user_ids):
                 -1,
             )))
 
-            group.append([
+            group.append(grp.struct_group((
                 username,
                 'x',
                 next_uid,
                 ''
-            ])
+            )))
 
     if set_sudo is True:
         sudo.sort()
@@ -266,9 +266,8 @@ def process(user_pks, pwall, spwall,grpall,set_sudo,user_ids):
         sorted(passwd_to_line(x) for x in passwd),
         sorted(shadow_to_line(x) for x in shadow),
         [x.encode('utf-8') for x in sudo],
-        sorted(shadow_to_line(x) for x in group),
+        sorted(":".join('' if isinstance(y,list) and len(y)==0 else str(y) for y in x).encode('utf-8') for x in group)
     )
-
 
 def write(lines, target, permissions='0644'):
     '''Write a sequence of byte strings to a file as individual lines.
