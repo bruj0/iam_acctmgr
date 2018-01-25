@@ -3,9 +3,9 @@ aws_acctmgr
 
 ``aws_acctmgr`` synchronizes a local NSS database against Amazon Web Services
 (AWS) Identity and Access Management (IAM) with the primary use-case of
-providing SSH access to AWS EC2 instances for remote administrators [1].
+providing SSH access to AWS EC2 instances for remote administrators.
 
-This relies on a new SSH Public Key metadata feature recently added to AWS IAM.
+This relies on the SSH Public Key metadata feature added to AWS IAM.
 Note that the AWS documentation currently only mentions this feature in the
 context of the AWS CodeCommit product but the API naming itself has no such
 context.
@@ -15,14 +15,16 @@ See:
     https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListSSHPublicKeys.html
 
 
-[1] If LDAP is overkill.  If LDAP is not, consider ``nsscache``.
+Features:
 
+* UID derived by the IAM UserID property, users will always have the same UID across
+all the intances
 
-Installation
-------------
+* IAM groups for Sudo users and regular users.
 
-These instructions have been tested with Debian 8 (Jessie) but should be fairly
-general.
+* Automatic creation of users home directory using the skel profile.
+
+* Local groups support
 
 IAM users are not added to the system via traditional mechanisms (e.g.
 ``/etc/passwd``).  Instead they are registered in a dedicated directory
@@ -30,34 +32,48 @@ provided by the "libnss-extrausers" package.  The host's ``/etc/nsswitch``
 should have ``extrausers`` appended to the ``passwd`` and ``shadow`` entries.
 
     passwd:         compat extrausers
-    group:          compat
+    group:          compat extrausers
     shadow:         compat extrausers
-    gshadow:        files
-
-    hosts:          files dns
-    networks:       files
-
-    protocols:      db files
-    services:       db files
-    ethers:         db files
-    rpc:            db files
-
-    netgroup:       nis
-
-Additionally, "libpam-modules" is required only if home directories should only
-be created on-demand.  On Debian systems, ensure that the line::
-
-    session required pam_mkhomedir.so skel=/etc/skel/ umask=0022
-
-Is added to ``etc/pam.d/common-account``.
-
 
 See:
     https://packages.debian.org/jessie/libnss-extrausers
-    https://packages.debian.org/jessie/libpam-modules
+
+Manual Installation
+-------------------
+
+* Install the package libnss-extrausers for your distribution, you can find RPMs for Centos here
+* iam_acctmgr_configure is used to add the configuration to the proper services.
+
+# git clone https://github.com/bruj0/iam_acctmgr.git
+# cd iam_acctmgr
+# python setup.py install
+# /usr/local/bin/iam_acctmgr_configure --sshd /etc/ssh/sshd_config --nsswitch /etc/nsswitch.conf --pam /etc/pam.d/sshd /usr/local/bin
+# service sshd restart
+# mkdir /var/lib/extrausers/
+# /etc/init.d/iam_accrtmgr start
+
+RPM Based Install
+-----------------
+
+I have created 2 rpms for Amazon Linux version amzn-ami-hvm-2017.09.1.20180115-x86_64-gp2 (ami-97785bed).
+
+$ rpm -i iam_acctmgr-0.1-1.noarch.rpm 
+$ rpm -i libnss-extrausers-0.6-0.x86_64.rpm
+$ /usr/bin/iam_acctmgr_configure --sshd /etc/ssh/sshd_config --nsswitch /etc/nsswitch.conf --pam /etc/pam.d/sshd /usr/bin
+$ service sshd restart
+$ /etc/init.d/iam_accrtmgr start
+$ chkconfig --add iam_acctmgr
+$ chkconfig iam_acctmgr on
 
 
 See Also
 --------
 
 https://github.com/google/nsscache
+
+
+Forked from
+------------
+
+https://github.com/Demeterr/iam_acctmgr 
+https://github.com/bshi
